@@ -1,37 +1,21 @@
-// server.js
-const http = require('http');
-const { Server } = require('socket.io');
+const WebSocket = require('ws');
 
 const PORT = process.env.PORT || 3000;
+const server = new WebSocket.Server({ port: PORT });
 
-// Create an HTTP server
-const server = http.createServer();
+server.on('connection', (ws) => {
+  console.log('🔌 Client connected');
 
-// Create Socket.IO server attached to the HTTP server
-const io = new Server(server, {
-  cors: {
-    origin: '*',  // Allow Unity to connect from any domain
-  }
-});
+  ws.on('message', (message) => {
+    console.log('📩 Received:', message.toString());
 
-// Listen for client connections
-io.on('connection', (socket) => {
-  console.log('New client connected:', socket.id);
-
-  // Handle messages from the client
-  socket.on('messageFromUnity', (data) => {
-    console.log('Received from Unity:', data);
-
-    // Optional: send a response back
-    socket.emit('messageFromServer', 'Hello from Node.js!');
+    // Respond back
+    ws.send('Hello from Node.js!');
   });
 
-  socket.on('disconnect', () => {
-    console.log('Client disconnected:', socket.id);
+  ws.on('close', () => {
+    console.log('❌ Client disconnected');
   });
 });
 
-// Start the server
-server.listen(PORT, () => {
-  console.log(`Socket.IO server running on http://localhost:${PORT}`);
-});
+console.log(`✅ WebSocket server is running at ws://localhost:${PORT}`);
