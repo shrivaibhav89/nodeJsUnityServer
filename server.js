@@ -20,6 +20,15 @@ function broadcast(data) {
     }
   });
 }
+// Set interval to send ping to each client every 30 seconds
+setInterval(() => {
+  wss.clients.forEach((ws) => {
+    if (ws.isAlive === false) return ws.terminate();
+
+    ws.isAlive = false;
+    ws.ping(); // Send ping to client
+  });
+}, 30000);
 
 function broadcastGameState() {
   broadcast({
@@ -30,6 +39,11 @@ function broadcastGameState() {
 }
 
 wss.on('connection', (ws) => {
+    ws.isAlive = true;
+
+    ws.on('pong', () => {
+        ws.isAlive = true;
+    });
   if (players.length >= 2) {
     ws.send(JSON.stringify({ type: 'error', message: 'Game full' }));
     ws.close();
