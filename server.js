@@ -1,72 +1,101 @@
 const http = require('http');
 const WebSocket = require('ws');
-const fs = require('fs');
-const path = require('path');
 
 const PORT = process.env.PORT || 3000;
-
-let connectedClients = [];
-
-// Create HTTP + WebSocket Server
-const server = http.createServer((req, res) => {
-  if (req.method === 'GET' && req.url === '/') {
-    const filePath = path.join(__dirname, 'index.html');
-    fs.readFile(filePath, 'utf8', (err, data) => {
-      if (err) {
-        res.writeHead(500);
-        res.end('Error loading UI');
-      } else {
-        res.writeHead(200, { 'Content-Type': 'text/html' });
-        res.end(data);
-      }
-    });
-  } else if (req.method === 'POST' && req.url === '/send') {
-    let body = '';
-    req.on('data', chunk => (body += chunk));
-    req.on('end', () => {
-      const msg = new URLSearchParams(body).get('msg');
-      console.log('📨 UI sent message to clients:', msg);
-
-      connectedClients.forEach(client => {
-        if (client.readyState === WebSocket.OPEN) {
-          client.send(`📢 From UI: ${msg}`);
-        }
-      });
-
-      res.writeHead(200);
-      res.end('Message sent to clients');
-    });
-  } else {
-    res.writeHead(404);
-    res.end('Not Found');
-  }
-});
-
-// Attach WebSocket Server to HTTP Server
+const server = http.createServer();
 const wss = new WebSocket.Server({ server });
 
-wss.on('connection', (ws) => {
-  console.log('🔌 Client connected');
-  connectedClients.push(ws);
+let players = [];
+let currentTurnIndex = 0;
+let scores = {};
 
-  // Ping every 10 seconds
-  const interval = setInterval(() => {
-    if (ws.readyState === WebSocket.OPEN) {
-      ws.send('📡 Ping from server every 10 seconds');
+function getPlayerBySocket(ws) {
+  return players.find(p => p.socket === ws);
+}
+
+function broadcast(data) {
+  players.forEach(p => {
+    if (p.socket.readyState === WebSocket.OPEN) {
+      p.socket.send(JSON.stringify(data));
     }
-  }, 10000);
+  });
+}
+
+function broadcastGameState() {
+  broadcast({
+    type: 'turn',
+    message: `${players[currentTurnIndex].id}'s turn`,
+    scores,
+  });
+}
+
+wss.on('connection', (ws) => {
+  if (players.length >= 2) {
+    ws.send(JSON.stringify({ type: 'error', message: 'Game full' }));
+    ws.close();
+    return;
+  }
+
+  const playerId = `player${players.length + 1}`;
+  players.push({ id: playerId, socket: ws });
+  scores[playerId] = 0;
+
+  ws.send(JSON.stringify({ type: 'info', message: `Welcome ${playerId}`, playerId }));
+
+  console.log(`✅ ${playerId} connected`);
+
+  if (players.length === 2) {
+    broadcastGameState();
+  }
 
   ws.on('message', (message) => {
-    console.log('📩 Received from client:', message.toString());
+    try {
+      const data = JSON.parse(message);
+      const player = getPlayerBySocket(ws);
+
+      if (!player) return;
+
+      if (data.type === 'roll') {
+        if (players[currentTurnIndex].socket !== ws) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Not your turn!' }));
+          return;
+        }
+
+        const roll = Math.floor(Math.random() * 6) + 1;
+        scores[player.id] += roll;
+
+        broadcast({
+          type: 'roll_result',
+          player: player.id,
+          rolled: roll,
+          scores,
+        });
+
+        // Next player's turn
+        currentTurnIndex = (currentTurnIndex + 1) % players.length;
+        broadcastGameState();
+      }
+    } catch (err) {
+      console.log('❌ Error parsing message:', err.message);
+    }
   });
 
   ws.on('close', () => {
-    console.log('❌ Client disconnected');
-    clearInterval(interval);
-    connectedClients = connectedClients.filter(client => client !== ws);
+    const index = players.findIndex(p => p.socket === ws);
+    if (index !== -1) {
+      console.log(`❌ ${players[index].id} disconnected`);
+      players.splice(index, 1);
+    }
+    scores = {};
+    currentTurnIndex = 0;
+    players.forEach(p => {
+      p.socket.send(JSON.stringify({ type: 'info', message: 'Other player disconnected. Restart game.' }));
+      p.socket.close();
+    });
+    players = [];
   });
 });
 
 server.listen(PORT, () => {
-  console.log(`✅ WebSocket server + UI running at http://localhost:${PORT}`);
+  console.log(`🎲 Dice Game Server running at ws://localhost:${PORT}`);
 });
